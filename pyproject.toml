@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "andy"
+authors = [
+  { name="Andy", email="aklempau@pm.com" },
+]
+description = "Andy's Python package"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: Public :: MIT",
+    "Operating System :: OS Independent",
+]
+dynamic = ["version"]
+
+[project.urls]
+"Homepage" = "https://github.com/andyklempau/andy"
+
+[project.scripts]
+compare_subnets = 'andy.pingable:main'
