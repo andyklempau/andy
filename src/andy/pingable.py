@@ -259,6 +259,7 @@ def main():
         print('Example:')
         print('   $ compare_subnets 192.168.0.0/24 192.168.1.0/24')
         return
+    print(f'Pinging {subnet_1} and {subnet_2}...')
     results = compare_subnets(subnet_1, subnet_2, retries=[1, 3])
     for each in results:
         print(each)
