@@ -53,7 +53,7 @@ class ThreadedQueue():
         self.queue.pop(index)
 
 def main():
-    """ Show how status of queue over time. """
+    """ Show how queue changes over time. """
     tq = ThreadedQueue()
     tq.add('i do not care')
     tq.remove()
