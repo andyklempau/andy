@@ -1,3 +1,4 @@
+""" A generic Command Line Interface for a VISA Device. """
 import sys
 from andy.visa.comms import Device, Msg
 
@@ -11,7 +12,7 @@ def user_selects_device(visa_instrument):
     if devices_len > 1:
         print('Multiple devices found.  Please select one.')
         for n, each in enumerate(devices, 1):
-            print(f' {n}) each')
+            print(f' {n}) {each}')
         user_entry = input('Select number: ')
         try:
             user_entry = int(user_entry)
@@ -43,7 +44,7 @@ def _cli(cls):
     """ UI helper
 
     Inputs:
-        cls (Message class): The message class--not object to use.
+        cls (Message class): The message class--not object.
     """
     visa_instrument = Device()
     user_selects_device(visa_instrument)
@@ -54,7 +55,7 @@ def cli(cls=Msg):
     """ UI logic
 
     Inputs:
-        cls (Message class): The message class--not object to use.
+        cls (Message class): The message class--not object.
     """
     try:
         _cli(cls)

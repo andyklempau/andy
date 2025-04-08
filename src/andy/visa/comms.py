@@ -1,7 +1,6 @@
 """ Communicating with any VISA instrument. """
 import warnings
 import time
-import sys
 import os
 import pyvisa
 
@@ -31,7 +30,6 @@ class Msg():
 
     def __str__(self):
         """ What this class looks like when printed as a string. """
-        s = f'{self.creation_time}'
         return f'{self.creation_time}_{self.cmd}'
 
     def validate(self, cmd):
@@ -56,14 +54,15 @@ class Device():
     Specific issues addressed:
     1) Do not wait forever (hang) for instrument to respond.
     2) When single instrument is connected, use that one by default.
+    3) When new instrument is swapped in, software should keep working.
     Install requires the pyvisa and pyvisa-py packages.
     Use Python >= 3.11  Why?
     """
-    TIMEOUT_MS = 10000
+    TIMEOUT_MS = 1000
     TIMEOUT_ERR = 'Timeout error'
 
     def __init__(self, name=''):
-        """ Minimal setup with object is created.
+        """ Initialize VISA device.
 
         Inputs:
             name (str): You may specify the resource name to use when
@@ -87,12 +86,12 @@ class Device():
         if self._device is not None:
             return self._device.resource_name
         return self._device_name
-    
+
     @name.setter
     def name(self, name):
         """ Change name of device to use.
         The resource will be reset every time you rename.
-        Note that name fractions can also work.  For example, "CN2443029079664"
+        Note, name fractions can also work.  For example, "CN2443029079664"
         will use device containing that part number.
         """
         self.reset_device()
@@ -110,20 +109,19 @@ class Device():
         """ Force device reset. """
         self._device = None
 
-    def _get_device(self, pn=None):
-        """ Return the VISA resource or None if not found.
-        
+    def _get_device(self, pn=''):
+        """ Return the VISA resource or None if not found.  Selects random
+        device when multiple are available.
+
         Inputs:
-          pn (string): Part Number used to select device in device list.
-            First device (which usually works) will be selected when pn is
-            not specifyed or is duplicated in device list.
-            
+            pn (string): Limit available VISA resources by specifying a Part
+                Number or partial Part Number.  Blank (default) includes all
+                resources.
+
         Note: Users should use device property to obtain resource--not this
         method; therefore, this method has been marked private.
         """
-        devices = self.list_devices()
-        if pn is not None:
-            devices = [d for d in devices if pn in d]
+        devices = [d for d in self.list_devices() if pn in d]
         if len(devices) == 0:
             return None
         device = self._rm.open_resource(devices[0])
@@ -146,20 +144,20 @@ class Device():
         try:
             result = self.device.write(msg.cmd)
         except ValueError:
-            msg.response_time = time.time()
-            msg.response = msg.COM_ERR
-            self.reset_device()
-            return
+            result = -1
         except pyvisa.errors.VisaIOError:
-            msg.response_time = time.time()
-            msg.response = msg.TIMEOUT
-            self.reset_device()
-            return
+            result = -2
         msg.response_time = time.time()
         if result - self.end_char_len == len(msg.cmd):
             # This is not verification that the instrument recieved message.
             # It only means the message was sent, or does it?
             msg.response = msg.OK
+        elif result == -1:
+            msg.response = msg.COM_ERR
+            self.reset_device()
+        elif result == -2:
+            msg.response = msg.TIMEOUT
+            self.reset_device()
         else:
             # Maybe 2 chars at end of ASCII string.
             msg.response = f'{msg.COM_ERR}: {len(msg.cmd)} != {result}!'
@@ -200,7 +198,7 @@ class Device():
 
         if msg.response != msg.PROCESSING:
             return msg
-        elif self.device is None:
+        if self.device is None:
             msg.response = msg.COM_ERR
             return msg
 
@@ -208,8 +206,7 @@ class Device():
             orig_timeout = self.device.timeout
             self.device.timeout = msg.timeout
 
-        # Lets implement the ? command!  Here?
-        if cmd[-1] != '?':
+        if msg.cmd[-1] != '?':
             self._write(msg)
         else:
             self._query(msg)
@@ -225,9 +222,12 @@ def main():
     vdev = Device('USB0::1183::20574::CN2443029079664::0::INSTR')
     msg = vdev.send(':CHAN1:SCAL 5mV')
     print(msg.response)
-    msg = vdev.send(':WAV:DATA:ALL?')
-    print(msg.response)
-    print(vdev.device.read())
+    #msg = vdev.device.write(':WAV:DATA:ALL?')
+    #msg = vdev.device.write(':DDS:ARB:DAC16:BIN')
+    #print(msg)
+    result = vdev.device.query_binary_values(':WAV:DATA:ALL?', datatype='d', is_big_endian=True)
+    #result = vdev.device.read()
+    print(result)
 
 if __name__ == '__main__':
     main()
