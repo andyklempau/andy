@@ -176,27 +176,11 @@ def compare_dicts(dict_1, dict_2):
 
     Return a new dictionary containing the common keys and the values of
         each dictionary whos values are not equal.  For example:
-            return {shared_key:[val_1, val_2]}
+            return {shared_key:[val_1, val_2_not_equal_to_val_1]}
     """
 
-    # Iterating on shortest dictionary is most efficient.
-    if len(dict_1) < len(dict_2):
-        short_dict = dict_1
-        long_dict = dict_2
-    else:
-        short_dict = dict_2
-        long_dict = dict_1
-
-    differences = {}
-    for key, val_1 in short_dict.items():
-        try:
-            val_2 = long_dict[key]
-        except KeyError:
-            continue
-        if val_1 != val_2:
-            differences[key] = [dict_1[key], dict_2[key]]
-
-    return differences
+    return {key:[val, dict_2[key]] for key, val in dict_1.items()
+        if key in dict_2 and dict_2[key] != val}
 
 def compare_subnets(subnet_1, subnet_2, retries=None, ignore_list=None):
     """Compares two subnets by pinging all ips in each and comparing results.
