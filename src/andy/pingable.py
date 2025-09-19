@@ -1,5 +1,7 @@
 """Pingable class to compare ip address ping results on different subnets."""
 
+import os
+import sys
 import logging
 import asyncio
 import ipaddress
@@ -7,246 +9,160 @@ import ipaddress
 logger = logging.getLogger(__name__)
 
 
-class Pingable():
+class Pingable(): # TODO Consider making this inherit IPv4Network.
     """Class for testing pings on subnets."""
-    def __init__(self, subnet='192.168.0.0/24', require_24_cidr=False):
-        self._retries  = 1
-        self._ip_ignore_list = [] # list of ints (last octet of ip)
-        self.require_24_cidr = require_24_cidr
-        self._subnet = None
-        self.subnet = subnet # calls setter
-        self.pingable_ips = {} # altered by ping_ip method
-
-    @property
-    def retries(self):
-        """ The number of times to ping a single ip address. """
-        return self._retries
-
-    @retries.setter
-    def retries(self, number=1):
-        """ Setter for retries is limited to 1, 2, or 3.
-            Warning logged if attempt to set outside of allowable range.
-        """
-        if number not in (1, 2, 3):
-            msg = 'Input "retries" must be 1, 2, or 3 only. "%s" is invalid.'
-            msg += '  Defaulting to 1.'
-            logger.warning(msg, number)
-        self._retries = number
-
-    @property
-    def ip_ignore_list(self):
-        """ A list of integers representing the last octet of ip address.
-            IPs ending with these octets will not be pinged.
-            Each IP octet must be between 1-254 inclusive.
-            Ints outside this range are removed after a warning is logged.
-        """
-        for ind, num in reversed(list(enumerate(self._ip_ignore_list))):
-            if num < 0:
-                msg = 'Number in ip_ignore_list is too small.'
-                msg += '  "%s" will be removed.'
-                logger.warning(msg, num)
-                self._ip_ignore_list.pop(ind)
-            elif num > 255:
-                msg = 'Number in ip_ignore_list is too large.'
-                msg += '  "%s" will be removed.'
-                logger.warning(msg, num)
-                self._ip_ignore_list.pop(ind)
-        return self._ip_ignore_list
-
-    @ip_ignore_list.setter
-    def ip_ignore_list(self, ignore_list):
-        """ ip_ignore_list must be list type.
-            Note, due to user's ability to use .append on this list, only
-                reading list will activate filter.
-        """
-        if isinstance(ignore_list, (list, tuple)):
-            self._ip_ignore_list = list(ignore_list)
-        else:
-            msg = 'ip_ignore_list must be a list type; not %s.'
-            logger.warning(msg, type(ignore_list))
-
-    @property
-    def subnet(self):
-        """ Returns subnet; default is 192.168.0.0/24 """
-        return self._subnet
-
-    @subnet.setter
-    def subnet(self, value):
-        """ subnet setter
-        Assignment can fail if given subnet is invalid.
-        """
-        if self.check_subnet(value, self.require_24_cidr):
-            self._subnet = value
-
-    @staticmethod
-    def check_subnet(subnet, require_slash_24=False):
-        """ Validates a subnet.
+    def __init__(self, subnet='192.168.0.0/24', require_24_cidr=False,
+                 ip_ignore_list=None, strict_subnets=False, retries=1):
+        """ Given a particular subnet, this class can ping each ip address
+        within that subnet using the ping command.
 
         Inputs:
         subnet -- A string in the form of a CIDR subnet.
             For example, "192.168.1.0/24"
         require_slash_24 -- Requires a /24 CIDR.  Default allows any CIDR.
+        ip_ignore_list -- A list of ints representing the last octet of ip.
+            Matching ip adresses will be ignored.
+        strict_subnets -- strict_subnets=False allows 192.168.1.1/24 as
+            subnet dispite having a ".1" as last octet.  strict_subnets=True
+            would instead require 192.168.1.0/24 as subnet where the last
+            octet must be a ".0".
+        retries -- The number of times each ping will be repeated.
+        """
+        self.retries = retries
+        self.pingable_ips = {}
+        if ip_ignore_list is None:
+            ip_ignore_list = []
+        self.ip_ignore_list = ip_ignore_list # list of ints (last octet of ip)
+        self.require_24_cidr = require_24_cidr
+        self.strict_subnets = False
+        self._subnet = None
+        self._ip_net = None
+        #self._semaphore = asyncio.Semaphore(100) # This does not appear to be needed
+        # because asyncio appears to work on a limited number of tasks at a time.
+        # https://stackoverflow.com/questions/48483348/how-to-limit-concurrency-with-python-asyncio
+        # Above link could be used to limit tasks further.
+        self.windows = os.name == 'nt'
+        self.subnet = subnet
 
-        Returns True when subnet is valid, False when subnet is not valid.
-        Note 1: strict=False allows 192.168.1.1/24 as subnet.  strict=True
-            would instead require 192.168.1.0/24 as subnet.
+    @property
+    def subnet(self):
+        """ Returns subnet """
+        return self._subnet
+
+    @subnet.setter
+    def subnet(self, subnet):
+        """ Assign value to subnet
+        Assignment can fail if given subnet is invalid.  Use try/except.
         """
         if not isinstance(subnet, str):
-            msg = 'Subnet input must be a string.  %s (type==%s) is invalid.'
-            logger.error(msg, subnet, type(subnet))
-            return False
-
+            msg = f'Subnet input must be a string.\n'
+            msg += f'  "{subnet}" (type=={type(subnet)}) is invalid.'
+            raise ValueError(msg)
         try:
-            ip_net = ipaddress.IPv4Network(subnet, strict=False)  # see Note 1
+            self._ip_net = ipaddress.IPv4Network(subnet, strict=self.strict_subnets)
         except (ipaddress.AddressValueError,
                 ipaddress.NetmaskValueError) as err:
-            logger.error('Invalid subnet "%s"--> %s', subnet, err)
-            return False
+            raise
+        if self.require_24_cidr:
+            if str(self._ip_net.netmask) != '255.255.255.0':
+                msg = f'{subnet} is an invalid CIDR.  Only /24 CIDR is allowed.\n'
+                msg += f'  Example: "192.168.1.0/24"'
+                raise ValueError(msg)
+        self._subnet = subnet
 
-        if require_slash_24:
-            if str(ip_net.netmask) != '255.255.255.0':
-                msg = '%s is an invalid CIDR.  Only /24 CIDR is allowed.'
-                msg += '  Example: "192.168.1.0/24"'
-                logger.error(msg, subnet)
-                return False
-
-        return True
-
-    @property
-    def subnet_base(self):
-        """ The subnet without the last octet or prefix length. """
-        try:
-            return self.subnet[0:self.subnet.rfind('.') + 1]
-        except (AttributeError, IndexError):
-            return None
-
-    @property
-    def ips(self):
+    def ips(self, use_ignore_set=True, remove_found=True):
         """ Returns a list (comprehension) of all ip addresses in subnet as
             strings.
         """
-        try:
-            ip_net = ipaddress.IPv4Network(self.subnet, strict=False)
-        except ipaddress.AddressValueError:
-            logger.error('Invalid subnet likely.')
-            return []
-        all_ips = [ip.exploded for ip in ip_net.hosts()]
-        ips_of_interest = [ip for ip in all_ips
-                           if int(ip.split('.')[3]) not in self.ip_ignore_list]
-        return ips_of_interest
-
-    def ping_ips(self):
-        """User facing method to ping all ips for prespecified subnet."""
-        try:
-            asyncio.run(self._ping_ips())
-        except ValueError:
-            logger.error('Error with ping_ips.')
-
-    async def _ping_ips(self):
-        """Helper method for ping_ips."""
-        tasks = [asyncio.create_task(self.ping_ip(ip)) for ip in self.ips]
-        await asyncio.wait(tasks)
-
-    async def _ping_ip(self, ip):
-        """Helper method for ping_ip."""
-        result = await asyncio.create_subprocess_shell(
-            f'ping -n {self.retries} {ip}',
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, _ = await result.communicate()
-        found = str(out).find('bytes=') # Successful pings contain "bytes=".
-        return found >= 0
+        ips = [ip.exploded for ip in self._ip_net.hosts()]
+        if use_ignore_set:
+            ip_ignore_set = set([octet for octet in self.ip_ignore_list if octet > 0 and octet < 255])
+            ips = [ip for ip in ips if int(ip.split('.')[3]) not in ip_ignore_set]
+        if remove_found:
+            ip_found_list = [ip for ip, found in self.pingable_ips.items() if found]
+            ips = [ip for ip in ips if ip not in ip_found_list]
+        return ips
 
     async def ping_ip(self, ip):
-        """ Ping given ip address.
-        Nothing is returned, but pingable_ips dictionary is manipulated.
+        """ Ping given ip address using host OS.
+            Command and result will be unique on different OS (Windows vs. Linux).
         """
-        logger.debug('Pinging %s...', ip)
-        found = await self._ping_ip(ip)
-        self.pingable_ips[ip] = found # atomic assignment
-        logger.debug('Finished pinging %s.', ip)
+        result = await asyncio.create_subprocess_shell(
+            f'ping {"-n" if self.windows else "-c"} 1 {ip}',
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stout, _ = await result.communicate()
+        key = 'bytes=' if self.windows else 'rtt min/avg/max/mdev'
+        self.pingable_ips[ip] = key in str(stout)
+        logger.debug('%s %s', ip, 'Found' if self.pingable_ips[ip] else 'Missing')
+
+    async def _ping_ips(self):
+        """ Put all ping commands in separate asyncio tasks. """
+        for _ in range(self.retries):
+            tasks = [asyncio.create_task(self.ping_ip(ip)) for ip in self.ips()]
+            await asyncio.wait(tasks)
+
+    def ping_ips(self):
+        """ Ping all ip addresses in subnet. """
+        logger.info('Attempting to ping subnet %s', self.subnet)
+        asyncio.run(self._ping_ips())
+        logger.info('All ip addresses in subnet %s have been pinged', self.subnet)
 
 
-def compare_dicts(dict_1, dict_2):
-    """ Find common keys between two given dictionaries whos values are
-    different.
+def compare_subnets(subnet_1, subnet_2):
+    """ Compare ping results of two subnets.
 
     Inputs:
-    dict_1 -- First dictionary
-    dict_2 -- Second dictionary
-
-    Return a new dictionary containing the common keys and the values of
-        each dictionary whos values are not equal.  For example:
-            return {shared_key:[val_1, val_2_not_equal_to_val_1]}
-    """
-
-    return {key:[val, dict_2[key]] for key, val in dict_1.items()
-        if key in dict_2 and dict_2[key] != val}
-
-def compare_subnets(subnet_1, subnet_2, retries=None, ignore_list=None):
-    """Compares two subnets by pinging all ips in each and comparing results.
-
-    Inputs:
-    subnet1 -- The first subnet as string.  Recommend /24 CIDR only.  Note,
-        192.168.1.1/24 is an allowed subnet although not strictly
-        a proper format.
-    subnet2 -- The other subnet as string.  Recommend /24 CIDR only.
-    retries -- The number of ping attempts per ip address. Must be
-        integer of either 1, 2, or 3.  Can be a list of two retries for
-        each subnet, respectively.
-    ignore_list -- A list of integers representing ending octets to ignore.
-        Integers must be 1 - 254.
+    subnet_1 -- This can be a subnet in string format, or a dictionary specifying
+        Pingable object signature, or a Pingable object.
+    subnet_2 -- The second subnet to compare with subnet_1.  See subnet_1.
 
     Returns a list of dictionary pairs where each pair has matching
-        ending ip octets as keys but have different boolean ping success
-        results as values.
+        ending ip octets from different subnets, and ping results have
+        different success value.  Note, this only works with hostmasks
+        of 0.0.0.255 or subnets of that.
     """
-    if retries is None:
-        retries = [1, 1]
-    elif isinstance(retries, int):
-        retries = [retries, retries]
-    if ignore_list is None:
-        ignore_list = []
+    if isinstance(subnet_1, Pingable):
+        p_1 = subnet_1
+    elif isinstance(subnet_1, dict):
+        p_1 = Pingable(**subnet_1)
+    else:
+        p_1 = Pingable(subnet_1)
+    p_1.ping_ips()
+    pingable_1 = {key.split('.')[3]:val for key, val in p_1.pingable_ips.items()}
+    network_1_front = p_1.subnet.rsplit('.', maxsplit=1)[0]
 
-    pingable_1 = Pingable(subnet_1)
-    pingable_1.retries = retries[0]
-    pingable_1.ip_ignore_list = ignore_list
-    pingable_1.ping_ips()
-    subnet_base_1 = pingable_1.subnet_base
-    octets_1 = {}
-    for key, val in pingable_1.pingable_ips.items():
-        octets_1[key.split('.')[3]] = val
+    if isinstance(subnet_2, Pingable):
+        p_2 = subnet_2
+    elif isinstance(subnet_2, dict):
+        p_2 = Pingable(**subnet_2)
+    else:
+        p_2 = Pingable(subnet_2)
+    p_2.ping_ips()
+    pingable_2 = {key.split('.')[3]:val for key, val in p_2.pingable_ips.items()}
+    network_2_front = p_2.subnet.rsplit('.', maxsplit=1)[0]
 
-    pingable_2 = Pingable(subnet_2)
-    pingable_2.retries = retries[1]
-    pingable_2.ip_ignore_list = ignore_list
-    pingable_2.ping_ips()
-    subnet_base_2 = pingable_2.subnet_base
-    octets_2 = {}
-    for key, val in pingable_2.pingable_ips.items():
-        octets_2[key.split('.')[3]] = val
-
-    results = []
-    for octet, vals in compare_dicts(octets_1, octets_2).items():
-        results.append([{f'{subnet_base_1}{octet}':vals[0]},
-                        {f'{subnet_base_2}{octet}':vals[1]}])
-    return results
+    return [[{f'{network_1_front}.{key}':val},
+             {f'{network_2_front}.{key}':pingable_2[key]}]
+            for key, val in pingable_1.items()
+            if key in pingable_2 and pingable_2[key] != val]
 
 def main():
-    """ Command line call of compare_subnets """
-    import sys
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
     arg_len = len(sys.argv)
     if arg_len == 3:
         subnet_1 = sys.argv[1]
         subnet_2 = sys.argv[2]
     else:
         print('Wrong number of arguments.')
-        print('Example:')
+        print("Let's assume you meant the following:")
         print('   $ compare_subnets 192.168.0.0/24 192.168.1.0/24')
-        return
-    print(f'Pinging {subnet_1} and {subnet_2}...')
-    results = compare_subnets(subnet_1, subnet_2, retries=[1, 3])
+        subnet_1 = '192.168.0.0/24'
+        subnet_2 = '192.168.1.0/24'
+    print(f'Pinging all hosts in {subnet_1} and {subnet_2}...')
+    results = compare_subnets(subnet_1, subnet_2)
     for each in results:
         print(each)
 
 if __name__ == '__main__':
     main()
+
