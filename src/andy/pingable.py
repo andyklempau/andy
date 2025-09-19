@@ -9,72 +9,52 @@ import ipaddress
 logger = logging.getLogger(__name__)
 
 
-class Pingable(): # TODO Consider making this inherit IPv4Network.
+class Pingable(ipaddress.IPv4Network):
     """Class for testing pings on subnets."""
-    def __init__(self, subnet='192.168.0.0/24', require_24_cidr=False,
-                 ip_ignore_list=None, strict_subnets=False, retries=1):
+    def __init__(self, address='192.168.0.0/24', require_24_cidr=False,
+                 ip_ignore_list=None, strict=False, retries=1):
         """ Given a particular subnet, this class can ping each ip address
         within that subnet using the ping command.
 
         Inputs:
-        subnet -- A string in the form of a CIDR subnet.
+        address -- A string in the form of a CIDR subnet.
             For example, "192.168.1.0/24"
         require_slash_24 -- Requires a /24 CIDR.  Default allows any CIDR.
         ip_ignore_list -- A list of ints representing the last octet of ip.
             Matching ip adresses will be ignored.
-        strict_subnets -- strict_subnets=False allows 192.168.1.1/24 as
+        strict -- strict=False allows 192.168.1.1/24 as
             subnet dispite having a ".1" as last octet.  strict_subnets=True
             would instead require 192.168.1.0/24 as subnet where the last
             octet must be a ".0".
         retries -- The number of times each ping will be repeated.
         """
+        super().__init__(address=address, strict=strict)
+        self.require_24_cidr = require_24_cidr
+        self.check_cidr()
         self.retries = retries
         self.pingable_ips = {}
         if ip_ignore_list is None:
             ip_ignore_list = []
         self.ip_ignore_list = ip_ignore_list # list of ints (last octet of ip)
-        self.require_24_cidr = require_24_cidr
-        self.strict_subnets = False
-        self._subnet = None
-        self._ip_net = None
         #self._semaphore = asyncio.Semaphore(100) # This does not appear to be needed
         # because asyncio appears to work on a limited number of tasks at a time.
         # https://stackoverflow.com/questions/48483348/how-to-limit-concurrency-with-python-asyncio
         # Above link could be used to limit tasks further.
         self.windows = os.name == 'nt'
-        self.subnet = subnet
 
-    @property
-    def subnet(self):
-        """ Returns subnet """
-        return self._subnet
-
-    @subnet.setter
-    def subnet(self, subnet):
-        """ Assign value to subnet
-        Assignment can fail if given subnet is invalid.  Use try/except.
-        """
-        if not isinstance(subnet, str):
-            msg = f'Subnet input must be a string.\n'
-            msg += f'  "{subnet}" (type=={type(subnet)}) is invalid.'
-            raise ValueError(msg)
-        try:
-            self._ip_net = ipaddress.IPv4Network(subnet, strict=self.strict_subnets)
-        except (ipaddress.AddressValueError,
-                ipaddress.NetmaskValueError) as err:
-            raise
+    def check_cidr(self):
+        """ Special check for CIDR of exactly /24. """
         if self.require_24_cidr:
-            if str(self._ip_net.netmask) != '255.255.255.0':
-                msg = f'{subnet} is an invalid CIDR.  Only /24 CIDR is allowed.\n'
+            if str(self.netmask) != '255.255.255.0':
+                msg = f'Given {self.exploded} has an invalid CIDR.  Only /24 CIDR is allowed.\n'
                 msg += f'  Example: "192.168.1.0/24"'
-                raise ValueError(msg)
-        self._subnet = subnet
+                raise ipaddress.AddressValueError(msg)
 
     def ips(self, use_ignore_set=True, remove_found=True):
         """ Returns a list (comprehension) of all ip addresses in subnet as
             strings.
         """
-        ips = [ip.exploded for ip in self._ip_net.hosts()]
+        ips = [ip.exploded for ip in self.hosts()]
         if use_ignore_set:
             ip_ignore_set = set([octet for octet in self.ip_ignore_list if octet > 0 and octet < 255])
             ips = [ip for ip in ips if int(ip.split('.')[3]) not in ip_ignore_set]
@@ -103,17 +83,16 @@ class Pingable(): # TODO Consider making this inherit IPv4Network.
 
     def ping_ips(self):
         """ Ping all ip addresses in subnet. """
-        logger.info('Attempting to ping subnet %s', self.subnet)
+        logger.info('Attempting to ping subnet %s', self.exploded)
         asyncio.run(self._ping_ips())
-        logger.info('All ip addresses in subnet %s have been pinged', self.subnet)
+        logger.info('All ip addresses in subnet %s have been pinged', self.exploded)
 
 
 def compare_subnets(subnet_1, subnet_2):
     """ Compare ping results of two subnets.
 
     Inputs:
-    subnet_1 -- This can be a subnet in string format, or a dictionary specifying
-        Pingable object signature, or a Pingable object.
+    subnet_1 -- This can be a subnet in string format, or a Pingable object.
     subnet_2 -- The second subnet to compare with subnet_1.  See subnet_1.
 
     Returns a list of dictionary pairs where each pair has matching
@@ -123,23 +102,19 @@ def compare_subnets(subnet_1, subnet_2):
     """
     if isinstance(subnet_1, Pingable):
         p_1 = subnet_1
-    elif isinstance(subnet_1, dict):
-        p_1 = Pingable(**subnet_1)
     else:
         p_1 = Pingable(subnet_1)
     p_1.ping_ips()
     pingable_1 = {key.split('.')[3]:val for key, val in p_1.pingable_ips.items()}
-    network_1_front = p_1.subnet.rsplit('.', maxsplit=1)[0]
+    network_1_front = str(p_1.network_address).rsplit('.', maxsplit=1)[0]
 
     if isinstance(subnet_2, Pingable):
         p_2 = subnet_2
-    elif isinstance(subnet_2, dict):
-        p_2 = Pingable(**subnet_2)
     else:
         p_2 = Pingable(subnet_2)
     p_2.ping_ips()
     pingable_2 = {key.split('.')[3]:val for key, val in p_2.pingable_ips.items()}
-    network_2_front = p_2.subnet.rsplit('.', maxsplit=1)[0]
+    network_2_front = str(p_2.network_address).rsplit('.', maxsplit=1)[0]
 
     return [[{f'{network_1_front}.{key}':val},
              {f'{network_2_front}.{key}':pingable_2[key]}]
@@ -163,6 +138,9 @@ def main():
     for each in results:
         print(each)
 
+def test_pingable():
+    p = Pingable('192.168.0.0/28', require_24_cidr=True)
+
 if __name__ == '__main__':
-    main()
+    test_pingable()
 
