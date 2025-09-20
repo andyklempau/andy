@@ -37,6 +37,7 @@ class IPv4Net(ipaddress.IPv4Network):
 
 class Pingable():
     """Class for testing pings on subnets."""
+    MAX_PING_PROC = 200 # Limit the maximum number of ping tasks.
     def __init__(self, network=None, ip_ignore_list=None, retries=1):
         """ This class can ping each host within a particular network using
         the ping command.
@@ -55,10 +56,7 @@ class Pingable():
         if ip_ignore_list is None:
             ip_ignore_list = []
         self.ip_ignore_list = ip_ignore_list # list of ints (last octet of ip)
-        #self._semaphore = asyncio.Semaphore(100) # This does not appear to be needed
-        # because asyncio appears to work on a limited number of tasks at a time.
-        # https://stackoverflow.com/questions/48483348/how-to-limit-concurrency-with-python-asyncio
-        # Above link could be used to limit tasks further.
+        self._semaphore = asyncio.Semaphore(self.MAX_PING_PROC) 
         self.windows = os.name == 'nt'
 
     def ips(self, use_ignore_set=True, remove_found=True):
@@ -78,13 +76,14 @@ class Pingable():
         """ Ping given ip address using host OS.
             Command and result will be unique on different OS (Windows vs. Linux).
         """
-        result = await asyncio.create_subprocess_shell(
-            f'ping {"-n" if self.windows else "-c"} 1 {ip}',
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stout, _ = await result.communicate()
-        key = 'bytes=' if self.windows else 'rtt min/avg/max/mdev'
-        self.pingable_ips[ip] = key in str(stout)
-        logger.debug('%s %s', ip, 'Found' if self.pingable_ips[ip] else 'Missing')
+        async with self._semaphore:
+            result = await asyncio.create_subprocess_shell(
+                f'ping {"-n" if self.windows else "-c"} 1 {ip}',
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stout, _ = await result.communicate()
+            key = 'bytes=' if self.windows else 'rtt min/avg/max/mdev'
+            self.pingable_ips[ip] = key in str(stout)
+            logger.debug('%s %s', ip, 'Found' if self.pingable_ips[ip] else 'Missing')
 
     async def _ping_ips(self):
         """ Put all ping commands in separate asyncio tasks. """
@@ -126,7 +125,7 @@ def compare_subnets(ping_1, ping_2):
 
 def main():
     """ Handle CLI """
-    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+    logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
     arg_len = len(sys.argv)
     if arg_len == 3:
         subnet_1 = sys.argv[1]
