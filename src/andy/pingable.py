@@ -1,4 +1,4 @@
-"""Pingable class to compare ip address ping results on different subnets."""
+"""Compare ip address ping results on different subnets."""
 
 import os
 import sys
@@ -56,7 +56,7 @@ class Pingable():
         if ip_ignore_list is None:
             ip_ignore_list = []
         self.ip_ignore_list = ip_ignore_list # list of ints (last octet of ip)
-        self._semaphore = asyncio.Semaphore(self.MAX_PING_PROC) 
+        self._semaphore = asyncio.Semaphore(self.MAX_PING_PROC)
         self.windows = os.name == 'nt'
 
     def ips(self, use_ignore_set=True, remove_found=True):
