@@ -1,5 +1,3 @@
-[filename]: messaging.py
-
 # Andy's messaging system
 ### Introduction
 This messaging system contains a Server and Client class.
@@ -11,9 +9,12 @@ CLI stands for Command Line Interface.
 Using CLI you can start a conversation with a different CLI client, and you can see a message you type travels to the other client.
 
 For example, open three terminal.
-+ In the first terminal start the server: > python [filename]
-+ In the second terminal start a client: > python [filename] Bob Eric
-+ In the third terminal start another client: > python [filename] Eric Bob
++ In the first terminal start the server:
+> python messaging.py
++ In the second terminal start a client:
+> python messaging.py Bob Eric
++ In the third terminal start another client:
+> python messaging.py Eric Bob
 
 Notes:
 1. Names are case sensitive, so "Bob" was capitalized in both clients.
@@ -23,8 +24,8 @@ Now, in the second terminal type a message for Eric.
 > Bob>>How's the weather?
 
 Eric should receive the message.
-> Eric>>
-> Bob>>How's the weather?
+> Eric>>\
+> Bob>>How's the weather?\
 > Eric>>
 
 ### Implementation Details
@@ -40,13 +41,13 @@ Should the end of message character be customizable?
 These are good questions, which I will answer later when I need to.
 ### History
 Originally, I was interested in exploring Asyncio and Sockets.
-Soon I discovered that Asyncio has facilities to eliminate the use of "low-level" sockets.
-So, I gave those a try.
+It turns out that Asyncio has facilities to eliminate the use of "low-level" sockets.
+So far asyncio.start_server works very well.
 
-The Server and Client are demonstrated with a user interface mimicing chat.
+The Server and Client are demonstrated with a user interface mimicking chat.
 However, I can forsee a test instrument sending data to another client who stores that data/message into a database.
-In other words, this could be used as a data acquisition system.
-I'm sure there are other uses too.
+In other words, this could be used as a data acquisition system instead.
+Undoubtedly, there are other uses too.
 
 I intended to keep this code a simple demonstration of asyncio.
 The example user interface is minimal.
